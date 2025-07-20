@@ -1,0 +1,176 @@
+    <?php
+
+    /**
+    * SOURCE CODE PERTAMA YANG MENGGUNAKAN NILAI AKTUAL, KRITERIA HANYA 5!
+    */
+
+    namespace App\Http\Controllers; // Namespace controller
+
+    use App\Models\Kategori; // Model Kategori
+    use App\Models\Wisata;   // Model Wisata
+    use App\Models\Kriteria;  // Model Kriteria
+    use Illuminate\Http\Request; // Kelas Request Laravel
+
+    class CalculateController extends Controller
+    {
+        /**
+        * Menangani & memvalidasi input, lalu memicu perhitungan SAW.
+        */
+        public function calculate(Request $request)
+        {
+            // Validasi data input dari form
+            $data = $request->validate([
+                'koordinat' => 'required',
+                'kategori' => 'required|exists:kategoris,id',
+                'kriteria_order' => 'required',
+                'weights' => 'required|array'
+            ]);
+
+            $weights = array_map('floatval', $data['weights']); // Ambil bobot (float)
+
+            // Validasi total bobot (harus 100%)
+            if (abs(array_sum($weights) - 100) > 0.01) {
+                return back()->withErrors(['weights' => 'Total bobot harus 100%']);
+            }
+
+            // Ubah bobot ke desimal & proses input lain
+            $weights_decimal = array_map(fn($w) => $w / 100, $weights);
+            $userCoords = explode(',', $data['koordinat']);
+            $kriteria_order = array_map('intval', explode(',', $data['kriteria_order']));
+
+            // Validasi kesesuaian jumlah kriteria & bobot
+            if (count($kriteria_order) != count($weights_decimal)) {
+                return back()->withErrors(['weights' => 'Jumlah kriteria dan bobot tidak sesuai']);
+            }
+
+            // Panggil fungsi SAW, pastikan bobot diindeks numerik (0-based)
+            $recommendations = $this->calculateSAW(
+                (float)trim($userCoords[0]),
+                (float)trim($userCoords[1]),
+                $data['kategori'],
+                $kriteria_order,
+                array_values($weights_decimal) // array_values() untuk re-index & pastikan 0-based
+            );
+
+            // Arahkan ke hasil atau kembali jika error/kosong
+            return empty($recommendations)
+                ? back()->with('error', 'Tidak ada tempat wisata ditemukan untuk kategori ini')
+                : redirect()->route('hasil')->with('recommendations', $recommendations);
+        }
+
+        /**
+        * Implementasi perhitungan Simple Additive Weighting (SAW).
+        */
+        private function calculateSAW($userLat, $userLng, $kategoriId, $kriteria_order, $weights)
+        {
+            // Ambil data wisata & kriteria sesuai input
+            $wisatas = Wisata::where('id_kategori', $kategoriId)->get();
+            if ($wisatas->isEmpty()) return []; // Kembalikan kosong jika tidak ada wisata
+
+            $kriterias = Kriteria::whereIn('id', $kriteria_order)
+                ->orderByRaw("FIELD(id, ".implode(',', $kriteria_order).")") // Urutkan sesuai input
+                ->get();
+
+            // Buat matriks keputusan (nilai asli)
+            $matrix = [];
+            foreach ($wisatas as $wisata) {
+                $matrix[] = [
+                    'wisata' => $wisata,
+                    'values' => [
+                        'jarak' => $this->calculateDistance($userLat, $userLng, $wisata->latitude, $wisata->longitude),
+                        'harga_tiket' => $wisata->harga_tiket,
+                        'jumlah_fasilitas' => $wisata->jumlah_fasilitas,
+                        'ulasan' => $wisata->ulasan,
+                        'waktu_operasional' => $wisata->waktu_operasional
+                    ]
+                ];
+            }
+
+            // Normalisasi matriks
+            $normalized = $this->normalizeMatrix($matrix, $kriterias);
+
+            // Hitung skor akhir untuk setiap wisata
+            $results = [];
+            foreach ($normalized as $item) {
+                $score = 0;
+                foreach ($kriterias as $idx => $kriteria) {
+                    // Akumulasi skor: (Nilai Normalisasi * Bobot)
+                    $score += $item['normalized'][$kriteria->nama_kriteria] * $weights[$idx];
+                }
+                $results[] = ['wisata' => $item['wisata'], 'score' => $score, 'details' => $item['values']];
+            }
+
+            // Urutkan hasil berdasarkan skor tertinggi
+            usort($results, fn($a, $b) => $b['score'] <=> $a['score']);
+            return $results;
+        }
+
+        /**
+        * Menghitung jarak Haversine (km).
+        */
+        private function calculateDistance($lat1, $lng1, $lat2, $lng2)
+        {
+            $earthRadius = 6371; // Jari-jari bumi dalam km
+            $latDiff = deg2rad($lat2 - $lat1);
+            $lngDiff = deg2rad($lng2 - $lng1);
+            $a = sin($latDiff / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($lngDiff / 2) ** 2;
+            $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+            return $earthRadius * $c; // Hasil jarak
+        }
+
+        /**
+        * Menormalisasi matriks keputusan (0-1).
+        */
+        private function normalizeMatrix($matrix, $kriterias)
+        {
+            $minMax = [];
+            // Inisialisasi min/max awal (gunakan INF agar lebih pendek & aman)
+            foreach ($kriterias as $kriteria) {
+                $minMax[$kriteria->nama_kriteria] = ['min' => INF, 'max' => -INF, 'type' => $kriteria->tipe, 'non_zero_min' => INF];
+            }
+
+            // Cari nilai min/max aktual
+            foreach ($matrix as $item) {
+                foreach ($kriterias as $kriteria) {
+                    $value = $item['values'][$kriteria->nama_kriteria];
+                    $key = $kriteria->nama_kriteria;
+                    $minMax[$key]['min'] = min($minMax[$key]['min'], $value);
+                    $minMax[$key]['max'] = max($minMax[$key]['max'], $value);
+                    // Catat min non-nol untuk harga_tiket (penanganan khusus)
+                    if ($key == 'harga_tiket' && $value > 0) {
+                        $minMax[$key]['non_zero_min'] = min($minMax[$key]['non_zero_min'], $value);
+                    }
+                }
+            }
+
+            // Proses normalisasi
+            $normalized = [];
+            foreach ($matrix as $item) {
+                $normItem = ['wisata' => $item['wisata'], 'values' => $item['values'], 'normalized' => []];
+                foreach ($kriterias as $kriteria) {
+                    $value = $item['values'][$kriteria->nama_kriteria];
+                    $stats = $minMax[$kriteria->nama_kriteria];
+                    $key = $kriteria->nama_kriteria;
+
+                    if ($stats['type'] == 'cost') { // Normalisasi untuk 'cost'
+                        $minToUse = ($key == 'harga_tiket' && $stats['non_zero_min'] != INF) ? $stats['non_zero_min'] : $stats['min'];
+                        // Jika gratis (0) = 1 (terbaik), else hitung min/value
+                        $normVal = ($key == 'harga_tiket' && $value == 0) ? 1 : (($value != 0) ? $minToUse / $value : 0);
+                    } else { // Normalisasi untuk 'benefit' (value/max)
+                        $normVal = ($stats['max'] != 0) ? $value / $stats['max'] : 0;
+                    }
+                    $normItem['normalized'][$key] = $normVal;
+                }
+                $normalized[] = $normItem;
+            }
+            return $normalized;
+        }
+
+        /**
+        * Menampilkan halaman hasil.
+        */
+        public function hasil()
+        {
+            return view('hasil'); // Mengembalikan view 'hasil'
+        }
+    }

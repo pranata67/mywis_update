@@ -1,0 +1,250 @@
+<?php
+
+/**
+ * SOURCE CODE KETIGA YANG MENGGUNAKAN NILAI AKTUAL DAN DIOPTIMISASI, KRITERIA HANYA 5!
+ */
+
+namespace App\Http\Controllers;
+
+use App\Models\Kategori;
+use App\Models\Wisata;
+use App\Models\Kriteria;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log; // Tambahkan untuk logging
+
+class CalculateController extends Controller
+{
+    public function calculate(Request $request)
+    {
+        // 1. VALIDASI INPUT (Lebih robust)
+        $data = $request->validate([
+            'koordinat' => 'required|regex:/^-?\d+\.?\d*,\s*-?\d+\.?\d*$/', // Validasi format koordinat
+            'kategori' => 'required|exists:kategoris,id',
+            'kriteria_order' => 'required',
+            'weights' => 'required|array'
+        ]);
+
+        // 2. PROSES INPUT
+        $weights = array_map('floatval', $data['weights']);
+
+        // Validasi bobot tidak negatif
+        foreach ($weights as $weight) {
+            if ($weight < 0) {
+                return back()->withErrors(['weights' => 'Bobot tidak boleh negatif']);
+            }
+        }
+
+        // Validasi total bobot 100%
+        if (abs(array_sum($weights) - 100) > 0.01) {
+            return back()->withErrors(['weights' => 'Total bobot harus 100%']);
+        }
+
+        // Proses koordinat dengan validasi lebih ketat
+        $userCoords = array_map('trim', explode(',', $data['koordinat']));
+        if (count($userCoords) !== 2 || !is_numeric($userCoords[0]) || !is_numeric($userCoords[1])) {
+            return back()->withErrors(['koordinat' => 'Format koordinat tidak valid']);
+        }
+
+        $kriteria_order = array_map('intval', explode(',', $data['kriteria_order']));
+        $weights_decimal = array_map(fn($w) => $w / 100, $weights);
+
+        // Validasi kesesuaian jumlah kriteria & bobot
+        if (count($kriteria_order) !== count($weights_decimal)) {
+            return back()->withErrors(['weights' => 'Jumlah kriteria dan bobot tidak sesuai']);
+        }
+
+        // 3. PERHITUNGAN SAW DENGAN ERROR HANDLING
+        try {
+            $recommendations = $this->calculateSAW(
+                (float)$userCoords[0],
+                (float)$userCoords[1],
+                (int)$data['kategori'],
+                $kriteria_order,
+                array_values($weights_decimal)
+            );
+
+            return empty($recommendations)
+                ? back()->with('error', 'Tidak ada tempat wisata ditemukan untuk kategori ini')
+                : redirect()->route('hasil')->with('recommendations', $recommendations);
+        } catch (\Exception $e) {
+            Log::error('SAW Calculation Error', [
+                'error' => $e->getMessage(),
+                'input' => $request->all(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return back()->with('error', 'Terjadi kesalahan sistem dalam perhitungan');
+        }
+    }
+
+    private function calculateSAW($userLat, $userLng, $kategoriId, $kriteria_order, $weights)
+    {
+        // OPTIMASI QUERY: Ambil hanya kolom yang diperlukan
+        $wisatas = Wisata::where('id_kategori', $kategoriId)
+            ->select([
+                'id',
+                'nama_wisata',
+                'latitude',
+                'longitude',
+                'harga_tiket',
+                'jumlah_fasilitas',
+                'ulasan',
+                'waktu_operasional',
+                'aksesbilitas'
+            ])
+            ->get();
+
+        if ($wisatas->isEmpty()) {
+            return [];
+        }
+
+        // Urutkan kriteria sesuai input user
+        $kriterias = Kriteria::whereIn('id', $kriteria_order)
+            ->orderByRaw("FIELD(id, " . implode(',', $kriteria_order) . ")")
+            ->get(['id', 'nama_kriteria', 'tipe']); // Hanya ambil kolom yang diperlukan
+
+        // Bangun matriks keputusan dengan nilai aktual
+        $matrix = [];
+        foreach ($wisatas as $wisata) {
+            $matrix[] = [
+                'wisata' => $wisata,
+                'values' => [
+                    'jarak' => $this->calculateDistance($userLat, $userLng, $wisata->latitude, $wisata->longitude),
+                    'harga_tiket' => $wisata->harga_tiket,
+                    'jumlah_fasilitas' => $wisata->jumlah_fasilitas,
+                    'ulasan' => $wisata->ulasan,
+                    'waktu_operasional' => $wisata->waktu_operasional,
+                    'aksesbilitas' => $wisata->aksesbilitas
+                ]
+            ];
+        }
+
+        // Normalisasi matriks (versi optimasi)
+        $normalized = $this->normalizeMatrix($matrix, $kriterias);
+
+        // Hitung skor akhir
+        $results = [];
+        foreach ($normalized as $item) {
+            $score = 0.0;
+            foreach ($kriterias as $idx => $kriteria) {
+                $normValue = $item['normalized'][$kriteria->nama_kriteria] ?? 0;
+                $score += $normValue * $weights[$idx];
+            }
+
+            // Format skor ke 4 desimal untuk konsistensi
+            $results[] = [
+                'wisata' => $item['wisata'],
+                'score' => round($score, 4),
+                'details' => $item['values']
+            ];
+        }
+
+        // Urutkan dari skor tertinggi ke terendah
+        usort($results, fn($a, $b) => $b['score'] <=> $a['score']);
+
+        return $results;
+    }
+
+    private function calculateDistance($lat1, $lng1, $lat2, $lng2)
+    {
+        try {
+            $earthRadius = 6371; // km
+            $latDiff = deg2rad($lat2 - $lat1);
+            $lngDiff = deg2rad($lng2 - $lng1);
+
+            $a = sin($latDiff / 2) * sin($latDiff / 2) +
+                cos(deg2rad($lat1)) * cos(deg2rad($lat2)) *
+                sin($lngDiff / 2) * sin($lngDiff / 2);
+
+            $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+
+            return $earthRadius * $c;
+        } catch (\Throwable $e) {
+            Log::warning('Distance calc error', [
+                'coords' => [$lat1, $lng1, $lat2, $lng2],
+                'error' => $e->getMessage()
+            ]);
+            return 0; // Default value jika error
+        }
+    }
+
+    /**
+     * Normalisasi matriks dengan optimasi dan penanganan kasus edge
+     */
+    private function normalizeMatrix($matrix, $kriterias)
+    {
+        // Langkah 1: Hitung statistik untuk semua kriteria sekaligus
+        $stats = [];
+        foreach ($kriterias as $kriteria) {
+            $key = $kriteria->nama_kriteria;
+            $values = array_column(array_column($matrix, 'values'), $key);
+
+            // Inisialisasi statistik
+            $stats[$key] = [
+                'min' => min($values),
+                'max' => max($values),
+                'type' => $kriteria->tipe,
+                'non_zero_min' => INF // Hanya untuk kriteria cost
+            ];
+
+            // Untuk kriteria cost, hitung nilai minimum non-zero
+            if ($kriteria->tipe === 'cost') {
+                $nonZeroValues = array_filter($values, fn($v) => $v > 0);
+                if (!empty($nonZeroValues)) {
+                    $stats[$key]['non_zero_min'] = min($nonZeroValues);
+                }
+            }
+        }
+
+        // Langkah 2: Normalisasi tiap item
+        $normalized = [];
+        foreach ($matrix as $item) {
+            $normItem = [
+                'wisata' => $item['wisata'],
+                'values' => $item['values'],
+                'normalized' => []
+            ];
+
+            foreach ($kriterias as $kriteria) {
+                $key = $kriteria->nama_kriteria;
+                $value = $item['values'][$key];
+                $stat = $stats[$key];
+                $normVal = 0.0;
+
+                // Handle kasus semua nilai sama
+                if ($stat['min'] == $stat['max']) {
+                    $normVal = 1.0;
+                    $normItem['normalized'][$key] = $normVal;
+                    continue;
+                }
+
+                // Normalisasi berdasarkan tipe kriteria
+                if ($stat['type'] === 'cost') {
+                    // Penanganan khusus nilai 0 untuk SEMUA kriteria cost
+                    if ($value == 0) {
+                        $normVal = 1.0; // Nilai terbaik
+                    } else {
+                        $minToUse = ($stat['non_zero_min'] !== INF)
+                            ? $stat['non_zero_min']
+                            : $stat['min'];
+                        $normVal = $minToUse / $value;
+                    }
+                } else { // benefit
+                    $normVal = ($stat['max'] > 0)
+                        ? $value / $stat['max']
+                        : 0.0;
+                }
+
+                $normItem['normalized'][$key] = $normVal;
+            }
+
+            $normalized[] = $normItem;
+        }
+
+        return $normalized;
+    }
+
+    public function hasil()
+    {
+        return view('hasil');
+    }
+}

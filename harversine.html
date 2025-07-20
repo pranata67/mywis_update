@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Haversine Formula - jQuery</title>
+  <!-- Load jQuery dari CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.js"></script>
+</head>
+<body>
+
+<h2>Hitung Jarak dengan Haversine</h2>
+
+<!-- Input untuk koordinat titik pertama -->
+<label>Latitude 1: <input type="text" id="lat1" value="-6.2000"></label><br>
+<label>Longitude 1: <input type="text" id="lon1" value="106.8167"></label><br>
+
+<!-- Input untuk koordinat titik kedua -->
+<label>Latitude 2: <input type="text" id="lat2" value="-7.2504"></label><br>
+<label>Longitude 2: <input type="text" id="lon2" value="112.7688"></label><br>
+
+<!-- Tombol untuk menghitung jarak -->
+<button id="hitungJarak">Hitung Jarak</button>
+
+<!-- Menampilkan hasil jarak -->
+<p id="hasilJarak"></p>
+
+<script>
+  // Fungsi konversi derajat ke radian
+  function toRadians(degrees) {
+    return degrees * Math.PI / 180;
+  }
+
+  // Fungsi utama untuk menghitung jarak menggunakan rumus Haversine
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371; // Jari-jari bumi dalam kilometer, jika menggunakan mil menjadi 3960 mil
+    const dLat = toRadians(lat2 - lat1); // Selisih lintang dalam radian
+    const dLon = toRadians(lon2 - lon1); // Selisih bujur dalam radian
+
+    // Rumus haversine
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+              
+    const c = 2 * Math.asin(Math.sqrt(a)); // Sudut tengah antara dua titik
+    return R * c; // Jarak akhir dalam kilometer
+  }
+
+  // Saat tombol diklik
+  $("#hitungJarak").on("click", function () {
+    // Ambil nilai dari input
+    const lat1 = parseFloat($("#lat1").val());
+    const lon1 = parseFloat($("#lon1").val());
+    const lat2 = parseFloat($("#lat2").val());
+    const lon2 = parseFloat($("#lon2").val());
+
+    // Hitung jarak dan bulatkan 2 angka di belakang koma
+    const jarak = haversine(lat1, lon1, lat2, lon2).toFixed(2);
+
+    // Tampilkan hasil
+    $("#hasilJarak").text("Jarak antara kedua titik: " + jarak + " km");
+  });
+</script>
+
+</body>
+</html>

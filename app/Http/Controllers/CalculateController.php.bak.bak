@@ -1,0 +1,306 @@
+<?php
+
+/**
+ * SOURCE CODE KEDUA YANG MENGGUNAKAN NILAI KONVERSI 1-5, KRITERIA HANYA 5!
+ */
+
+namespace App\Http\Controllers; // Mendefinisikan namespace untuk controller
+
+// Komentar ini menjelaskan bahwa file ini digunakan untuk perhitungan dan perangkingan kriteria.
+// Ini adalah implementasi dari Sistem Pendukung Keputusan (SPK) menggunakan metode SAW.
+
+// Mengimpor kelas-kelas yang diperlukan dari model dan framework Laravel.
+use App\Models\Kategori; // Model untuk tabel 'kategoris'.
+use App\Models\Wisata;   // Model untuk tabel 'wisatas'.
+use App\Models\Kriteria; // Model untuk tabel 'kriterias'.
+use Illuminate\Http\Request; // Kelas Request dari Laravel untuk menangani input HTTP.
+
+/**
+ * Class CalculateController
+ * Controller ini bertanggung jawab untuk menangani logika perhitungan
+ * rekomendasi tempat wisata menggunakan metode Simple Additive Weighting (SAW).
+ */
+class CalculateController extends Controller
+{
+    /**
+     * Menerima input dari pengguna, melakukan validasi, dan memulai proses perhitungan SAW.
+     * Fungsi ini dipicu ketika pengguna mengirimkan form pemilihan kriteria.
+     *
+     * @param Request $request Objek yang berisi data dari HTTP request.
+     * @return \Illuminate\Http\RedirectResponse Mengarahkan pengguna ke halaman hasil atau kembali ke halaman sebelumnya dengan pesan error.
+     */
+    public function calculate(Request $request)
+    {
+        // 1. VALIDASI INPUT
+        // Memvalidasi data yang dikirim dari form. Jika validasi gagal, Laravel akan otomatis
+        // mengarahkan pengguna kembali ke halaman sebelumnya dengan pesan error.
+        $data = $request->validate([
+            'koordinat'      => 'required', // Koordinat pengguna harus ada.
+            'kategori'       => 'required|exists:kategoris,id', // ID Kategori harus ada dan valid di tabel 'kategoris'.
+            'kriteria_order' => 'required', // Urutan kriteria yang dipilih pengguna harus ada.
+            'weights'        => 'required|array' // Bobot untuk setiap kriteria harus ada dan dalam bentuk array.
+        ]);
+
+        // 2. PROSES INPUT
+        // Mengubah setiap elemen dalam array bobot dari string menjadi float.
+        $weights = array_map('floatval', $data['weights']);
+
+        // Validasi tambahan untuk memastikan total bobot adalah 100%.
+        // abs() digunakan untuk menangani kemungkinan ketidakpresisian floating point.
+        if (abs(array_sum($weights) - 100) > 0.01) {
+            return back()->withErrors(['weights' => 'Total bobot harus 100%']);
+        }
+
+        // Mengubah bobot dari persentase (0-100) menjadi desimal (0-1) untuk perhitungan.
+        $weights_decimal = array_map(fn($w) => $w / 100, $weights);
+        // Memisahkan string koordinat (contoh: "-7.123,112.456") menjadi array [latitude, longitude].
+        $userCoords = explode(',', $data['koordinat']);
+        // Mengubah string urutan ID kriteria (contoh: "1,3,2") menjadi array integer.
+        $kriteria_order = array_map('intval', explode(',', $data['kriteria_order']));
+
+        // Validasi untuk memastikan jumlah kriteria yang dipilih sama dengan jumlah bobot yang diberikan.
+        if (count($kriteria_order) != count($weights_decimal)) {
+            return back()->withErrors(['weights' => 'Jumlah kriteria dan bobot tidak sesuai']);
+        }
+
+        // 3. MEMANGGIL FUNGSI PERHITUNGAN SAW
+        // Memanggil fungsi inti `calculateSAW` dengan data yang sudah diproses.
+        $recommendations = $this->calculateSAW(
+            (float)trim($userCoords[0]), // Latitude pengguna
+            (float)trim($userCoords[1]), // Longitude pengguna
+            $data['kategori'],           // ID Kategori wisata
+            $kriteria_order,             // Urutan ID kriteria
+            array_values($weights_decimal) // Bobot desimal yang sudah di-re-index. `array_values` memastikan index array berurutan (0, 1, 2, ...).
+        );
+
+        // 4. MENGARAHKAN KE HALAMAN HASIL
+        // Jika tidak ada rekomendasi yang dihasilkan (misalnya tidak ada wisata di kategori tersebut),
+        // kembalikan pengguna ke halaman sebelumnya dengan pesan error.
+        // Jika ada, arahkan ke halaman 'hasil' dan kirim data rekomendasi melalui session.
+        return empty($recommendations)
+            ? back()->with('error', 'Tidak ada tempat wisata ditemukan untuk kategori ini')
+            : redirect()->route('hasil')->with('recommendations', $recommendations);
+    }
+
+    /**
+     * Fungsi inti untuk mengimplementasikan metode Simple Additive Weighting (SAW).
+     *
+     * @param float $userLat Latitude pengguna.
+     * @param float $userLng Longitude pengguna.
+     * @param int $kategoriId ID kategori wisata yang dipilih.
+     * @param array $kriteria_order Array ID kriteria sesuai urutan preferensi pengguna.
+     * @param array $weights Array bobot desimal yang telah dinormalisasi.
+     * @return array Array berisi hasil perangkingan tempat wisata.
+     */
+    private function calculateSAW($userLat, $userLng, $kategoriId, $kriteria_order, $weights)
+    {
+        // Langkah 1: Mengambil data alternatif (tempat wisata) dari database.
+        $wisatas = Wisata::where('id_kategori', $kategoriId)->get();
+        if ($wisatas->isEmpty()) {
+            return []; // Jika tidak ada wisata di kategori ini, kembalikan array kosong.
+        }
+
+        // Mengambil data kriteria dari database sesuai dengan yang dipilih pengguna.
+        // `orderByRaw` dengan `FIELD` digunakan untuk memastikan urutan kriteria sama dengan urutan input pengguna.
+        $kriterias = Kriteria::whereIn('id', $kriteria_order)
+            ->orderByRaw("FIELD(id, " . implode(',', $kriteria_order) . ")")
+            ->get();
+
+        // Langkah 2: Membuat matriks keputusan.
+        // Matriks ini akan berisi nilai asli dari setiap alternatif untuk setiap kriteria.
+        $matrix = [];
+        foreach ($wisatas as $wisata) {
+            $matrix[] = [
+                'wisata' => $wisata, // Menyimpan objek Eloquent Wisata.
+                'actual_values' => [ // Menyimpan nilai asli (belum dikonversi).
+                    'jarak' => $this->calculateDistance($userLat, $userLng, $wisata->latitude, $wisata->longitude),
+                    'harga_tiket' => $wisata->harga_tiket,
+                    'jumlah_fasilitas' => $wisata->jumlah_fasilitas,
+                    'ulasan' => $wisata->ulasan,
+                    'waktu_operasional' => $wisata->waktu_operasional
+                ],
+                'scored_values' => [] // Inisialisasi array untuk menyimpan nilai skor (1-5).
+            ];
+        }
+
+        // Langkah 3: Konversi nilai aktual ke skor (1-5).
+        // Proses ini disebut juga 'kualifikasi' atau 'rating scale conversion'.
+        // Tujuannya adalah untuk menyeragamkan skala penilaian yang berbeda-beda.
+        foreach ($matrix as &$item) { // Tanda '&' berarti kita memodifikasi array asli secara langsung.
+            foreach ($item['actual_values'] as $kriteriaKey => $actualValue) {
+                // Setiap nilai aktual dikonversi menjadi skor 1-5 menggunakan fungsi `convertActualToScore`.
+                $item['scored_values'][$kriteriaKey] = $this->convertActualToScore($kriteriaKey, $actualValue);
+            }
+        }
+        unset($item); // Wajib untuk 'unset' referensi setelah loop selesai untuk menghindari bug.
+
+        // Langkah 4: Normalisasi matriks.
+        // Matriks yang sudah berisi skor 1-5 dinormalisasi ke rentang 0-1.
+        $normalized = $this->normalizeMatrix($matrix, $kriterias);
+
+        // Langkah 5: Menghitung skor akhir (Perangkingan).
+        // Skor akhir dihitung dengan mengalikan matriks ternormalisasi dengan bobot kriteria.
+        $results = [];
+        foreach ($normalized as $item) {
+            $score = 0;
+            foreach ($kriterias as $idx => $kriteria) {
+                // Mengambil nilai ternormalisasi untuk kriteria saat ini.
+                $normalizedValue = $item['normalized'][$kriteria->nama_kriteria] ?? 0;
+                // Menambahkan hasil perkalian nilai ternormalisasi dengan bobotnya ke skor total.
+                $score += $normalizedValue * $weights[$idx];
+            }
+            $results[] = [
+                'wisata' => $item['wisata'],
+                'score' => $score, // Skor akhir untuk alternatif ini.
+                'actual_details' => $item['actual_values'] // Menyertakan detail nilai asli untuk ditampilkan di hasil.
+            ];
+        }
+
+        // Langkah 6: Mengurutkan hasil.
+        // `usort` digunakan untuk mengurutkan array berdasarkan nilai 'score' secara descending (dari tertinggi ke terendah).
+        usort($results, fn($a, $b) => $b['score'] <=> $a['score']);
+
+        return $results; // Mengembalikan hasil akhir yang sudah terurut.
+    }
+
+    /**
+     * Menghitung jarak antara dua titik koordinat geografis menggunakan formula Haversine.
+     *
+     * @param float $lat1 Latitude titik pertama.
+     * @param float $lng1 Longitude titik pertama.
+     * @param float $lat2 Latitude titik kedua.
+     * @param float $lng2 Longitude titik kedua.
+     * @return float Jarak dalam kilometer (km).
+     */
+    private function calculateDistance($lat1, $lng1, $lat2, $lng2)
+    {
+        $earthRadius = 6371; // Radius rata-rata bumi dalam km.
+        $latDiff = deg2rad($lat2 - $lat1); // Perbedaan latitude dalam radian.
+        $lngDiff = deg2rad($lng2 - $lng1); // Perbedaan longitude dalam radian.
+        $a = sin($latDiff / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($lngDiff / 2) ** 2;
+        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+        return $earthRadius * $c; // Hasil akhir adalah jarak dalam km.
+    }
+
+    /**
+     * Mengonversi nilai aktual dari setiap kriteria menjadi skor diskrit (1-5).
+     * Ini adalah langkah penting untuk menyeragamkan data sebelum normalisasi.
+     *
+     * @param string $kriteriaName Nama kriteria (e.g., 'jarak', 'harga_tiket').
+     * @param mixed $actualValue Nilai aktual dari kriteria tersebut.
+     * @return float Skor antara 1 sampai 5.
+     */
+    private function convertActualToScore(string $kriteriaName, $actualValue): float
+    {
+        switch ($kriteriaName) {
+            case 'jarak': // Semakin kecil jarak, semakin tinggi skornya (cost).
+                if ($actualValue <= 3) return 5;   // Sangat Dekat
+                if ($actualValue <= 7) return 4;   // Dekat
+                if ($actualValue <= 11) return 3;  // Cukup
+                if ($actualValue <= 15) return 2;  // Jauh
+                return 1;                          // Sangat Jauh
+            case 'harga_tiket': // Semakin murah harga, semakin tinggi skornya (cost).
+                if ($actualValue <= 10000) return 5; // Sangat Murah
+                if ($actualValue <= 20000) return 4; // Murah
+                if ($actualValue <= 30000) return 3; // Cukup
+                if ($actualValue <= 40000) return 2; // Mahal
+                return 1;                           // Sangat Mahal
+            case 'jumlah_fasilitas': // Semakin banyak fasilitas, semakin tinggi skornya (benefit).
+                if ($actualValue >= 7) return 5;    // Sangat Lengkap
+                if ($actualValue >= 5) return 4;    // Lengkap
+                if ($actualValue >= 3) return 3;    // Cukup
+                if ($actualValue >= 1) return 2;    // Kurang
+                return 1;                           // Sangat Kurang
+            case 'ulasan': // Semakin tinggi ulasan, semakin tinggi skornya (benefit).
+                if ($actualValue >= 4.6) return 5;  // Sangat Baik
+                if ($actualValue >= 4.1) return 4;  // Baik
+                if ($actualValue >= 3.6) return 3;  // Cukup
+                if ($actualValue >= 3.1) return 2;  // Kurang
+                return 1;                           // Buruk
+            case 'waktu_operasional': // Semakin lama durasi buka, semakin tinggi skornya (benefit).
+                if ($actualValue >= 12) return 5;   // Sangat Lama
+                if ($actualValue >= 9) return 4;    // Lama
+                if ($actualValue >= 6) return 3;    // Cukup
+                if ($actualValue >= 3) return 2;    // Sebentar
+                return 1;                           // Sangat Sebentar
+        }
+        return 0; // Default jika nama kriteria tidak cocok.
+    }
+
+    /**
+     * Melakukan normalisasi matriks keputusan (yang sudah dalam bentuk skor 1-5).
+     *
+     * @param array $matrix Matriks keputusan berisi skor 1-5.
+     * @param \Illuminate\Database\Eloquent\Collection $kriterias Koleksi objek kriteria.
+     * @return array Matriks yang telah ternormalisasi (nilai 0-1).
+     */
+    private function normalizeMatrix($matrix, $kriterias)
+    {
+        $minMax = [];
+        // Inisialisasi array untuk menyimpan nilai min, max, dan tipe untuk setiap kriteria.
+        foreach ($kriterias as $kriteria) {
+            $minMax[$kriteria->nama_kriteria] = ['min' => INF, 'max' => -INF, 'type' => $kriteria->tipe];
+        }
+
+        // Mencari nilai minimum dan maksimum dari skor (1-5) untuk setiap kriteria di semua alternatif.
+        foreach ($matrix as $item) {
+            foreach ($kriterias as $kriteria) {
+                $score = $item['scored_values'][$kriteria->nama_kriteria];
+                if ($score != 0) {
+                    $minMax[$kriteria->nama_kriteria]['min'] = min($minMax[$kriteria->nama_kriteria]['min'], $score);
+                    $minMax[$kriteria->nama_kriteria]['max'] = max($minMax[$kriteria->nama_kriteria]['max'], $score);
+                }
+            }
+        }
+
+        // Handle kasus jika tidak ada nilai valid yang ditemukan (semua skor 0).
+        foreach ($kriterias as $kriteria) {
+            $key = $kriteria->nama_kriteria;
+            if ($minMax[$key]['min'] === INF) $minMax[$key]['min'] = 1;
+            if ($minMax[$key]['max'] === -INF) $minMax[$key]['max'] = 1;
+        }
+
+        // Proses normalisasi.
+        $normalized = [];
+        foreach ($matrix as $item) {
+            $normItem = [
+                'wisata' => $item['wisata'],
+                'actual_values' => $item['actual_values'],
+                'scored_values' => $item['scored_values'],
+                'normalized' => []
+            ];
+            foreach ($kriterias as $kriteria) {
+                $score = $item['scored_values'][$kriteria->nama_kriteria];
+                $stats = $minMax[$kriteria->nama_kriteria];
+                $normVal = 0.0;
+
+                if ($score == 0) {
+                    $normVal = 0.0;
+                } elseif ($stats['type'] == 'cost') {
+                    // Jika tipe kriteria adalah 'cost' (biaya), gunakan rumus: min(Cj) / Rij
+                    // Semakin kecil nilai asli, semakin besar nilai ternormalisasi (mendekati 1).
+                    $normVal = $stats['min'] / $score;
+                } else { // Jika tipe 'benefit' (keuntungan)
+                    // Jika tipe kriteria adalah 'benefit', gunakan rumus: Rij / max(Cj)
+                    // Semakin besar nilai asli, semakin besar nilai ternormalisasi (mendekati 1).
+                    $normVal = $score / $stats['max'];
+                }
+                $normItem['normalized'][$kriteria->nama_kriteria] = $normVal;
+            }
+            $normalized[] = $normItem;
+        }
+        return $normalized;
+    }
+
+    /**
+     * Menampilkan halaman view 'hasil.blade.php'.
+     * Data rekomendasi diambil dari session yang dikirim oleh metode `calculate`.
+     *
+     * @return \Illuminate\View\View
+     */
+    public function hasil()
+    {
+        // Laravel secara otomatis akan menyediakan data dari session 'recommendations' ke view 'hasil'.
+        return view('hasil');
+    }
+}

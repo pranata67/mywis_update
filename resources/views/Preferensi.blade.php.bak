@@ -1,0 +1,324 @@
+@extends('layouts.apptailwind')
+
+@section('content')
+
+{{-- Container utama dengan class untuk tema terang dan gelap --}}
+<div class="container mx-auto px-4 sm:px-6 lg:px-8 py-8 
+            bg-gray-100 text-gray-900 
+            dark:bg-gray-900 dark:text-gray-100 
+            rounded-lg shadow-xl min-h-screen">
+    <form action="{{ route('calculate') }}" method="POST" id="preferenceForm" class="space-y-8">
+    @csrf
+    {{-- Judul dengan class untuk tema terang dan gelap --}}
+    <h2 class="text-3xl font-semibold mb-10 text-center 
+               text-gray-800 
+               dark:text-white">Sesuaikan Preferensi Wisata Anda</h2>
+
+    {{-- BAGIAN PETA - Gaya untuk wrapper ini TETAP (gelap) sesuai permintaan --}}
+    <div class="bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg">
+        {{-- Label di dalam bagian peta juga tetap gelap --}}
+        <label class="block text-xl font-medium text-gray-200 mb-3 text-center">Lihat Lokasi Anda Melalui Peta</label>
+        {{-- Div peta itu sendiri memiliki border-gray-700 yang juga akan tetap --}}
+        <div id="map" class="w-full max-w-4xl h-72 md:h-96 mx-auto rounded-lg shadow-2xl border-2 border-gray-700"></div>
+    </div>
+
+    {{-- Wrapper untuk input koordinat dengan class tema --}}
+    <div class="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg">
+        <label for="coordinates_input" class="block text-lg font-medium 
+                                              text-gray-700 
+                                              dark:text-gray-200 mb-2">Koordinat Anda</label>
+        <input type="text" 
+               class="mt-1 block w-full px-4 py-3 
+                      bg-white border border-gray-300 placeholder-gray-400 text-gray-900 
+                      dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-500 dark:text-gray-200 
+                      rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" 
+               id="coordinates_input" name="koordinat" required readonly placeholder="Pilih lokasi pada peta...">
+    </div>
+
+    {{-- Wrapper untuk pilihan kategori dengan class tema --}}
+    <div class="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg">
+        <label for="kategori_select" class="block text-lg font-medium 
+                                            text-gray-700 
+                                            dark:text-gray-200 mb-2">Pilih Kategori Tempat Wisata</label>
+        <select id="kategori_select" name="kategori" 
+                class="mt-1 block w-full pl-4 pr-10 py-3 text-base 
+                       bg-white border-gray-300 text-gray-900 
+                       dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200 
+                       focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md appearance-none">
+            @foreach($kategoris as $kategori)
+                <option value="{{ $kategori->id }}">{{ $kategori->nama_kategori }}</option>
+            @endforeach
+        </select>
+    </div>
+
+    {{-- Wrapper untuk tabel bobot kriteria dengan class tema --}}
+    <div class="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg">
+        <label class="block text-lg font-medium 
+                        text-gray-700 
+                        dark:text-gray-200 mb-3">Masukkan Persentase Bobot Prioritas Kriteria</label>
+        <p class="text-sm 
+                  text-gray-500 
+                  dark:text-gray-400 mb-4">Total bobot dari semua kriteria harus 100%.</p>
+        <input type="hidden" name="kriteria_order" id="kriteria_order">
+        
+        <div class="overflow-x-auto shadow-md sm:rounded-lg">
+            <table class="min-w-full 
+                          divide-y divide-gray-200 bg-white 
+                          dark:divide-gray-700 dark:bg-gray-800">
+                <thead class="bg-gray-200 dark:bg-gray-800">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium 
+                                               text-gray-500 
+                                               dark:text-gray-400 uppercase tracking-wider">Kriteria</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium 
+                                               text-gray-500 
+                                               dark:text-gray-400 uppercase tracking-wider">Bobot (%)</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200 
+                              dark:bg-gray-800 dark:divide-gray-600">
+                    @foreach($kriterias as $kriteria)
+                    <tr data-id="{{ $kriteria->id }}">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm 
+                                   text-gray-700 
+                                   dark:text-gray-300">{{ $kriteria->nama_kriteria }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                             <input type="number"
+                                   class="w-28 px-3 py-2 
+                                          bg-white border border-gray-300 text-gray-900 
+                                          dark:bg-gray-700 dark:border-gray-600 dark:text-white 
+                                          rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm weight-input"
+                                   name="weights[{{ $kriteria->id }}]"
+                                   min="0"
+                                   max="100"
+                                   step="1"
+                                   required
+                                   placeholder="0-100">
+                        </td>
+                    </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {{-- Gaya pesan error dipertahankan konsisten untuk visibilitas tinggi --}}
+    <div id="form-error-message" class="hidden mt-4 p-4 bg-red-600 border border-red-700 text-white rounded-lg shadow"></div>
+
+    <div class="pt-5">
+        <button type="submit" 
+                class="w-full sm:w-auto inline-flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-lg shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 
+                       focus:ring-offset-gray-100 dark:focus:ring-offset-gray-900 
+                       focus:ring-green-500 transition ease-in-out duration-150">
+            Cari Rekomendasi Wisata
+        </button>
+    </div>
+    </form>
+
+    {{-- Menampilkan Error Validasi Laravel - gaya dipertahankan konsisten --}}
+    @if ($errors->any())
+        <div class="mt-8 p-4 bg-red-600 text-white rounded-lg shadow-md">
+            <p class="font-bold text-lg mb-2">Oops! Ada beberapa kesalahan:</p>
+            <ul class="list-disc list-inside pl-5 space-y-1">
+                @foreach ($errors->all() as $error)
+                    <li>{{ $error }}</li>
+                @endforeach
+            </ul>
+        </div>
+    @endif
+</div>
+
+
+{{-- Styles untuk Leaflet (jika belum ada di layouts.app) --}}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" integrity="sha512-xodZBNTC5n17Xt2atTPuE1HxjVMSvLVW9ocqUKLsCC5CXdbqCmblAshOMAS6/keqq/sMZMZ19scR4PsZChSR7A==" crossorigin=""/>
+
+{{-- Scripts --}}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js" integrity="sha512-XQoYMqMTK8LvdxXYG3nZ448hOEQiglfqkJs1NOQV44cWnUrBc8PkAOcXy20w0vlaXaVUearIOBhiXZ5V3ynxwA==" crossorigin=""></script>
+
+@php
+use App\Models\Wisata;
+$wisatas = Wisata::all();
+@endphp
+
+<script>
+// JavaScript untuk validasi form dan inisialisasi peta tetap sama.
+// Logika untuk toggle tema sudah ditangani oleh layouts.apptailwind.blade.php.
+document.addEventListener('DOMContentLoaded', function() {
+    // Form submission logic
+    const preferenceForm = document.getElementById('preferenceForm');
+    const formErrorMessageDiv = document.getElementById('form-error-message');
+
+    if (preferenceForm) {
+        preferenceForm.addEventListener('submit', function(e) {
+            let totalWeight = 0;
+            document.querySelectorAll('.weight-input').forEach(input => {
+                totalWeight += parseFloat(input.value) || 0;
+            });
+
+            formErrorMessageDiv.classList.add('hidden');
+            formErrorMessageDiv.textContent = '';
+
+            if (Math.abs(totalWeight - 100) > 0.01) {
+                e.preventDefault(); 
+                formErrorMessageDiv.textContent = 'Total persentase bobot untuk semua kriteria harus tepat 100%. Mohon periksa kembali.';
+                formErrorMessageDiv.classList.remove('hidden');
+                formErrorMessageDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return false;
+            }
+
+            const kriteriaIdsInOrder = @json($kriterias->pluck('id')->all());
+            const kriteriaOrderInput = document.querySelector('#kriteria_order');
+            if (kriteriaOrderInput) {
+                kriteriaOrderInput.value = kriteriaIdsInOrder.join(',');
+            }
+        });
+    }
+
+    // Map Initialization
+    var wisataLocations = @json($wisatas->map(function($wisata) {
+        return [
+            'coordinates' => $wisata->coordinates,
+            'name' => $wisata->name
+        ];
+    }));
+
+    var map;
+    var defaultLat = -7.46312315189351;
+    var defaultLng = 112.431916883491;
+    // 'inputMarker' tidak lagi digunakan, kita hanya akan pakai 'userLocationMarker'
+    var userLocationMarker;
+
+    // FUNGSI UNTUK MENGAMBIL LOKASI BERDASARKAN IP (SEBAGAI FALLBACK)
+
+    function fetchLocationByIp(redIcon) { // Ditambahkan parameter redIcon
+        console.log('Mencoba mendapatkan lokasi via IP Geolocation...');
+        fetch('https://ip-api.com/json')
+            .then(response => response.json())
+            .then(data => {
+                if (data && data.status === 'success') {
+                    var ipLat = data.lat;
+                    var ipLng = data.lon;
+
+                    console.log('Berhasil mendapatkan lokasi dari IP:', data.city);
+                    
+                    // PERUBAHAN: Perbarui posisi marker yang sudah ada
+                    map.setView([ipLat, ipLng], 12);
+                    userLocationMarker.setLatLng([ipLat, ipLng]);
+                    userLocationMarker.bindPopup('Mohon izinkan akses GPS pada browser Anda. (Lokasi saat ini terdeteksi melalui IP Address Anda)').openPopup();
+                    $('#coordinates_input').val(ipLat.toFixed(6) + ', ' + ipLng.toFixed(6));
+
+                } else {
+                    console.warn('IP Geolocation gagal. Menggunakan lokasi default.');
+                    // Biarkan marker di posisi default dan perbarui popup
+                    userLocationMarker.bindPopup('Lokasi tidak terdeteksi, menggunakan lokasi default.').openPopup();
+                }
+            })
+            .catch(error => {
+                console.error('Error saat fetch IP Geolocation:', error);
+                userLocationMarker.bindPopup('Lokasi tidak terdeteksi, menggunakan lokasi default.').openPopup();
+            });
+    }
+
+    function initMap() {
+        if (typeof L === 'undefined') {
+            console.error('Leaflet library is not loaded. Map cannot be initialized.');
+            const mapDiv = document.getElementById('map');
+            if(mapDiv) {
+                mapDiv.innerHTML = '<p class="text-center text-red-400 dark:text-red-500 p-4">Pustaka peta (Leaflet) gagal dimuat. Silakan coba muat ulang halaman.</p>';
+            }
+            return;
+        }
+
+        map = L.map('map').setView([defaultLat, defaultLng], 10);
+
+        L.tileLayer('http://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+            maxZoom: 20,
+            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+        }).addTo(map);
+
+        wisataLocations.forEach(function(location) {
+            try {
+                var coords = location.coordinates.split(/,\s*/);
+                if (coords.length === 2 && !isNaN(parseFloat(coords[0])) && !isNaN(parseFloat(coords[1]))) {
+                    L.marker([parseFloat(coords[0]), parseFloat(coords[1])])
+                        .addTo(map)
+                        .bindPopup(L.popup({maxWidth: 200}).setContent(location.name));
+                } else {
+                    console.warn('Invalid coordinates for wisata:', location.name, location.coordinates);
+                }
+            } catch (error) {
+                console.error('Error processing wisata location:', location.name, error);
+            }
+        });
+
+        // PERUBAHAN BESAR: Hapus inputMarker dan event drag, langsung buat userLocationMarker (merah)
+        
+        // 1. Definisikan ikon merah di awal agar bisa dipakai di semua kondisi
+        var redIcon = L.icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+            shadowSize: [41, 41]
+        });
+
+        // 2. Langsung buat marker merah di lokasi default (bukan marker biru yang bisa digeser)
+        userLocationMarker = L.marker([defaultLat, defaultLng], { icon: redIcon })
+            .addTo(map)
+            .bindPopup('Mencari lokasi Anda...')
+            .openPopup();
+        
+        // 3. Atur nilai awal input koordinat
+        $('#coordinates_input').val(defaultLat.toFixed(6) + ', ' + defaultLng.toFixed(6));
+
+        // 4. Logika drag-and-drop DIHAPUS
+
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                function(position) { // Success Callback
+                    var userLat = position.coords.latitude;
+                    var userLng = position.coords.longitude;
+
+                    // PERUBAHAN: Cukup perbarui posisi marker merah yang sudah ada
+                    map.setView([userLat, userLng], 13);
+                    userLocationMarker.setLatLng([userLat, userLng]);
+                    userLocationMarker.bindPopup('Lokasi Anda Saat Ini').openPopup();
+                    $('#coordinates_input').val(userLat.toFixed(6) + ', ' + userLng.toFixed(6));
+                },
+                function(error) { // Error Callback
+                    console.warn('Error getting user location:', error.message);
+                    fetchLocationByIp(redIcon); // Panggil fallback IP
+                },
+                { timeout: 10000, enableHighAccuracy: true }
+            );
+        } else {
+            console.warn('Geolocation is not supported by this browser.');
+            fetchLocationByIp(redIcon); // Panggil fallback IP
+        }
+        $(window).on('resize', function() {
+            setTimeout(function() { map.invalidateSize(); }, 100);
+        }).trigger('resize');
+    }
+
+    if (typeof L !== 'undefined') {
+        initMap();
+    } else {
+        console.warn('Leaflet not immediately available, will try to init map shortly...');
+        setTimeout(function() {
+            if (typeof L !== 'undefined') {
+                initMap();
+            } else {
+                 console.error('Leaflet failed to load. Map cannot be initialized.');
+                 const mapDiv = document.getElementById('map');
+                 if(mapDiv) {
+                     mapDiv.innerHTML = '<p class="text-center text-red-400 dark:text-red-500 p-4">Map gagal dimuat. Periksa koneksi internet atau coba muat ulang halaman.</p>';
+                 }
+            }
+        }, 1000);
+    }
+});
+</script>
+
+@endsection
