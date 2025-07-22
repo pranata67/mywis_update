@@ -41,12 +41,33 @@
                 <label for="kategori_select" class="label">
                     <span class="label-text text-lg">Pilih Kategori Tempat Wisata</span>
                 </label>
-                {{-- Ukuran teks dropdown akan normal secara default --}}
                 <select id="kategori_select" name="kategori" class="select select-bordered w-full">
+                    <option disabled selected>Pilih salah satu...</option>
                     @foreach($kategoris as $kategori)
                         <option value="{{ $kategori->id }}">{{ $kategori->nama_kategori }}</option>
                     @endforeach
                 </select>
+            </div>
+        </div>
+
+        {{-- (BARU) Card untuk menampilkan daftar wisata sesuai kategori --}}
+        <div id="wisata-list-container" class="card bg-base-100 shadow-xl hidden">
+            <div class="card-body">
+                <label class="label">
+                    <span class="label-text text-lg">Daftar Wisata dalam Kategori Terpilih</span>
+                </label>
+                <div class="overflow-x-auto max-h-60">
+                    <table class="table table-zebra w-full">
+                        <thead>
+                            <tr class="bg-base-200">
+                                <th>Nama Tempat Wisata</th>
+                            </tr>
+                        </thead>
+                        <tbody id="wisata-list-body">
+                            {{-- Konten akan diisi oleh JavaScript --}}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -60,7 +81,6 @@
                 <input type="hidden" name="kriteria_order" id="kriteria_order">
                 
                 <div class="overflow-x-auto">
-                    {{-- Ukuran teks tabel akan normal secara default --}}
                     <table class="table w-full">
                         <thead>
                             <tr class="bg-base-200">
@@ -73,11 +93,10 @@
                             <tr data-id="{{ $kriteria->id }}">
                                 <td>{{ ucwords(str_replace('_', ' ', $kriteria->nama_kriteria)) }}</td>
                                 <td>
-                                     {{-- DIUBAH: Menghapus class 'input-sm' untuk ukuran normal --}}
                                      <input type="number"
                                            class="input input-bordered w-28 weight-input"
                                            name="weights[{{ $kriteria->id }}]"
-                                           min="0"
+                                           min="1"
                                            max="100"
                                            step="1"
                                            required
@@ -123,23 +142,73 @@
 </div>
 
 
-{{-- Dependencies dan Scripts (tidak berubah secara fungsional) --}}
+{{-- Dependencies dan Scripts --}}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" integrity="sha512-xodZBNTC5n17Xt2atTPuE1HxjVMSvLVW9ocqUKLsCC5CXdbqCmblAshOMAS6/keqq/sMZMZ19scR4PsZChSR7A==" crossorigin=""/>
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js" integrity="sha512-XQoYMqMTK8LvdxXYG3nZ448hOEQiglfqkJs1NOQV44cWnUrBc8PkAOcXy20w0vlaXaVUearIOBhiXZ5V3ynxwA==" crossorigin=""></script>
 
 @php
-use App\Models\Wisata;
-$wisatas = Wisata::all();
+// $wisatas sudah di-pass dari controller
 @endphp
 
 <script>
-// JavaScript untuk validasi form dan inisialisasi peta tetap sama.
 document.addEventListener('DOMContentLoaded', function() {
     const preferenceForm = document.getElementById('preferenceForm');
     const formErrorMessageDiv = document.getElementById('form-error-message');
     const formErrorSpan = formErrorMessageDiv.querySelector('span');
+    
+    // (BARU) Variabel untuk fungsionalitas kategori dan list wisata
+    const allWisatas = @json($wisatas);
+    const kategoriSelect = document.getElementById('kategori_select');
+    const wisataListContainer = document.getElementById('wisata-list-container');
+    const wisataListBody = document.getElementById('wisata-list-body');
 
+    // (BARU) Fungsi untuk memperbarui daftar wisata berdasarkan kategori
+    function updateWisataList(selectedCategoryId) {
+        // Kosongkan tabel
+        wisataListBody.innerHTML = '';
+
+        if (!selectedCategoryId) {
+            wisataListContainer.classList.add('hidden');
+            return;
+        }
+
+        // Filter wisata berdasarkan id_kategori
+        const filteredWisatas = allWisatas.filter(wisata => wisata.id_kategori == selectedCategoryId);
+
+        if (filteredWisatas.length > 0) {
+            // Isi tabel dengan data yang difilter
+            filteredWisatas.forEach(wisata => {
+                const row = `<tr><td>${wisata.name}</td></tr>`;
+                wisataListBody.innerHTML += row;
+            });
+            // Tampilkan container tabel
+            wisataListContainer.classList.remove('hidden');
+        } else {
+            // Sembunyikan jika tidak ada wisata di kategori tsb
+            wisataListContainer.classList.add('hidden');
+        }
+    }
+
+    // (BARU) Event listener saat pilihan kategori diubah
+    kategoriSelect.addEventListener('change', function() {
+        updateWisataList(this.value);
+    });
+
+    // (BARU) Cek parameter URL saat halaman dimuat
+    const urlParams = new URLSearchParams(window.location.search);
+    const kategoriIdFromUrl = urlParams.get('kategori_id');
+
+    if (kategoriIdFromUrl) {
+        // Set nilai dropdown sesuai parameter URL
+        kategoriSelect.value = kategoriIdFromUrl;
+        
+        // Picu event 'change' secara manual untuk memuat daftar wisata
+        kategoriSelect.dispatchEvent(new Event('change'));
+    }
+
+
+    // Validasi form bobot
     if (preferenceForm) {
         preferenceForm.addEventListener('submit', function(e) {
             let totalWeight = 0;
@@ -166,6 +235,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    // Inisialisasi Peta Leaflet (kode peta tidak diubah)
     var wisataLocations = @json($wisatas->map(function($wisata) {
         return [
             'coordinates' => $wisata->coordinates,
@@ -175,24 +245,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
     var map;
     var defaultLat = -7.490675772242737;
-    var defaultLng = -7.490675772242737;
+    var defaultLng = 112.44445853750588; // Koreksi longitude agar di sekitar Mojokerto
     var userLocationMarker;
 
     function fetchLocationByIp(redIcon) {
-        console.log('Mencoba mendapatkan lokasi via IP Geolocation...');
         fetch('https://ip-api.com/json')
             .then(response => response.json())
             .then(data => {
                 if (data && data.status === 'success') {
                     var ipLat = data.lat;
                     var ipLng = data.lon;
-                    console.log('Berhasil mendapatkan lokasi dari IP:', data.city);
                     map.setView([ipLat, ipLng], 12);
                     userLocationMarker.setLatLng([ipLat, ipLng]);
                     userLocationMarker.bindPopup('Mohon izinkan akses GPS pada browser Anda. (Lokasi saat ini terdeteksi melalui IP Address Anda)').openPopup();
                     $('#coordinates_input').val(ipLat.toFixed(6) + ', ' + ipLng.toFixed(6));
                 } else {
-                    console.warn('IP Geolocation gagal. Menggunakan lokasi default.');
                     userLocationMarker.bindPopup('Lokasi tidak terdeteksi, menggunakan lokasi default.').openPopup();
                 }
             })
@@ -252,7 +319,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
-                function(position) { // Success Callback
+                function(position) {
                     var userLat = position.coords.latitude;
                     var userLng = position.coords.longitude;
                     map.setView([userLat, userLng], 13);
@@ -260,7 +327,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     userLocationMarker.bindPopup('Lokasi Anda Saat Ini').openPopup();
                     $('#coordinates_input').val(userLat.toFixed(6) + ', ' + userLng.toFixed(6));
                 },
-                function(error) { // Error Callback
+                function(error) {
                     console.warn('Error getting user location:', error.message);
                     fetchLocationByIp(redIcon);
                 },

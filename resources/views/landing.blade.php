@@ -70,7 +70,7 @@
                     <div class="card-body items-center text-center">
                         <div class="text-primary text-4xl mb-4">📊</div>
                         <h3 class="card-title">Kriteria Komprehensif</h3>
-                        <p>Pemeringkatan berdasarkan 5 faktor penting untuk rekomendasi akurat.</p>
+                        <p>Pemeringkatan berdasarkan 6 faktor penting untuk rekomendasi akurat.</p>
                     </div>
                 </div>
                 <div class="card bg-base-100 shadow-xl transform hover:-translate-y-2 transition-transform duration-300">
@@ -96,43 +96,47 @@
                 <h2 class="text-3xl md:text-4xl font-bold">Kategori Wisata</h2>
             </div>
             <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
+                {{-- DIUBAH: Menambahkan parameter kategori_id=1 pada URL --}}
                 <div class="card bg-base-100 shadow-xl image-full transition-all duration-300 hover:shadow-2xl">
                     <figure><img src="https://static.promediateknologi.id/crop/0x0:0x0/0x0/webp/photo/p2/229/2024/10/31/candi-bajang-ratu-2709528309.png" alt="Sejarah"/></figure>
                     <div class="card-body">
                         <h3 class="card-title text-2xl">Sejarah</h3>
                         <p>Jelajahi peninggalan sejarah dan kekayaan budaya Mojokerto.</p>
                         <div class="card-actions justify-end">
-                            <a href="{{ route('preferensi') }}" class="btn btn-primary">Lihat Detail</a>
+                            <a href="{{ route('preferensi', ['kategori_id' => 1]) }}" class="btn btn-primary">Lihat Detail</a>
                         </div>
                     </div>
                 </div>
+                {{-- DIUBAH: Menambahkan parameter kategori_id=2 pada URL --}}
                 <div class="card bg-base-100 shadow-xl image-full transition-all duration-300 hover:shadow-2xl">
                     <figure><img src="https://static.promediateknologi.id/crop/0x585:1080x1616/0x0/webp/photo/p2/74/2024/09/15/Screenshot_20240915_192755-181566920.jpg" alt="Alam"/></figure>
                     <div class="card-body">
                         <h3 class="card-title text-2xl">Alam</h3>
                         <p>Temukan keindahan alam Mojokerto yang mempesona.</p>
                         <div class="card-actions justify-end">
-                            <a href="{{ route('preferensi') }}" class="btn btn-primary">Lihat Detail</a>
+                            <a href="{{ route('preferensi', ['kategori_id' => 2]) }}" class="btn btn-primary">Lihat Detail</a>
                         </div>
                     </div>
                 </div>
+                {{-- DIUBAH: Menambahkan parameter kategori_id=3 pada URL --}}
                 <div class="card bg-base-100 shadow-xl image-full transition-all duration-300 hover:shadow-2xl">
                     <figure><img src="https://awsimages.detik.net.id/community/media/visual/2022/05/01/masjid-di-mojokerto_43.jpeg?w=480" alt="Religi"/></figure>
                     <div class="card-body">
                         <h3 class="card-title text-2xl">Religi</h3>
                         <p>Kunjungi destinasi wisata religi yang menenangkan jiwa.</p>
                         <div class="card-actions justify-end">
-                            <a href="{{ route('preferensi') }}" class="btn btn-primary">Lihat Detail</a>
+                            <a href="{{ route('preferensi', ['kategori_id' => 3]) }}" class="btn btn-primary">Lihat Detail</a>
                         </div>
                     </div>
                 </div>
+                {{-- DIUBAH: Menambahkan parameter kategori_id=4 pada URL --}}
                 <div class="card bg-base-100 shadow-xl image-full transition-all duration-300 hover:shadow-2xl">
                     <figure><img src="https://faktualnews.co/images/2022/05/liburan-keluarga.jpg" alt="Wisata Keluarga"/></figure>
                     <div class="card-body">
                         <h3 class="card-title text-2xl">Wisata Keluarga</h3>
                         <p>Ciptakan momen seru bersama keluarga di destinasi ramah anak.</p>
                         <div class="card-actions justify-end">
-                            <a href="{{ route('preferensi') }}" class="btn btn-primary">Lihat Detail</a>
+                            <a href="{{ route('preferensi', ['kategori_id' => 4]) }}" class="btn btn-primary">Lihat Detail</a>
                         </div>
                     </div>
                 </div>
